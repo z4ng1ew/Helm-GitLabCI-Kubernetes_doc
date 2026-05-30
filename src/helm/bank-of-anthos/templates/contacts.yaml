@@ -1,0 +1,74 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: contacts
+  labels:
+    app: contacts
+spec:
+  replicas: {{ .Values.replicas.contacts }}
+  selector:
+    matchLabels:
+      app: contacts
+  template:
+    metadata:
+      labels:
+        app: contacts
+    spec:
+      containers:
+        - name: contacts
+          image: "{{ .Values.imageRepo }}/contacts:{{ .Values.imageTag }}"
+          imagePullPolicy: {{ .Values.imagePullPolicy }}
+          ports:
+            - name: http
+              containerPort: 8080
+          env:
+            - name: VERSION
+              value: {{ .Values.appVersion | quote }}
+            - name: PORT
+              value: "8080"
+            - name: ENABLE_TRACING
+              value: "false"
+            - name: LOG_LEVEL
+              value: "info"
+          envFrom:
+            - configMapRef:
+                name: environment-config
+            - configMapRef:
+                name: accounts-db-config
+          volumeMounts:
+            - name: keys
+              mountPath: /tmp/.ssh
+              readOnly: true
+          readinessProbe:
+            tcpSocket:
+              port: 8080
+            initialDelaySeconds: 15
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              memory: 256Mi
+      volumes:
+        - name: keys
+          secret:
+            secretName: {{ .Values.jwt.secretName }}
+            items:
+              - key: jwtRS256.key.pub
+                path: publickey
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: contacts
+  labels:
+    app: contacts
+spec:
+  type: ClusterIP
+  selector:
+    app: contacts
+  ports:
+    - name: http
+      port: 8080
+      targetPort: 8080

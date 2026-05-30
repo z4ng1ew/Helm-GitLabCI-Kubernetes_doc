@@ -1,0 +1,53 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: environment-config
+data:
+  LOCAL_ROUTING_NUM: {{ .Values.environment.localRoutingNum | quote }}
+  PUB_KEY_PATH: {{ .Values.environment.pubKeyPath | quote }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: service-api-config
+data:
+  TRANSACTIONS_API_ADDR: "ledgerwriter:8080"
+  BALANCES_API_ADDR: "balancereader:8080"
+  HISTORY_API_ADDR: "transactionhistory:8080"
+  CONTACTS_API_ADDR: "contacts:8080"
+  USERSERVICE_API_ADDR: "userservice:8080"
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: demo-data-config
+data:
+  USE_DEMO_DATA: {{ .Values.demo.useDemoData | quote }}
+  DEMO_LOGIN_USERNAME: {{ .Values.demo.username | quote }}
+  DEMO_LOGIN_PASSWORD: {{ .Values.demo.password | quote }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: accounts-db-config
+  labels:
+    app: accounts-db
+data:
+  POSTGRES_DB: {{ .Values.accountsDb.postgresDb | quote }}
+  POSTGRES_USER: {{ .Values.accountsDb.postgresUser | quote }}
+  POSTGRES_PASSWORD: {{ .Values.accountsDb.postgresPassword | quote }}
+  ACCOUNTS_DB_URI: "postgresql://{{ .Values.accountsDb.postgresUser }}:{{ .Values.accountsDb.postgresPassword }}@accounts-db:5432/{{ .Values.accountsDb.postgresDb }}"
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: ledger-db-config
+  labels:
+    app: ledger-db
+data:
+  POSTGRES_DB: {{ .Values.ledgerDb.postgresDb | quote }}
+  POSTGRES_USER: {{ .Values.ledgerDb.postgresUser | quote }}
+  POSTGRES_PASSWORD: {{ .Values.ledgerDb.postgresPassword | quote }}
+  SPRING_DATASOURCE_URL: "jdbc:postgresql://ledger-db:5432/{{ .Values.ledgerDb.postgresDb }}"
+  SPRING_DATASOURCE_USERNAME: {{ .Values.ledgerDb.postgresUser | quote }}
+  SPRING_DATASOURCE_PASSWORD: {{ .Values.ledgerDb.postgresPassword | quote }}

@@ -1,0 +1,82 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: transactionhistory
+  labels:
+    app: transactionhistory
+spec:
+  replicas: {{ .Values.replicas.transactionhistory }}
+  selector:
+    matchLabels:
+      app: transactionhistory
+  template:
+    metadata:
+      labels:
+        app: transactionhistory
+    spec:
+      containers:
+        - name: transactionhistory
+          image: "{{ .Values.imageRepo }}/transactionhistory:{{ .Values.imageTag }}"
+          imagePullPolicy: {{ .Values.imagePullPolicy }}
+          ports:
+            - name: http
+              containerPort: 8080
+          env:
+            - name: VERSION
+              value: {{ .Values.appVersion | quote }}
+            - name: PORT
+              value: "8080"
+            - name: ENABLE_TRACING
+              value: "false"
+            - name: ENABLE_METRICS
+              value: "false"
+            - name: POLL_FREQUENCY_SECONDS
+              value: "5"
+            - name: CACHE_SIZE
+              value: "1000000"
+            - name: JVM_OPTS
+              value: "-XX:+UseContainerSupport -XX:MaxRAMPercentage=70"
+            - name: LOG_LEVEL
+              value: "info"
+          envFrom:
+            - configMapRef:
+                name: environment-config
+            - configMapRef:
+                name: ledger-db-config
+          volumeMounts:
+            - name: keys
+              mountPath: /tmp/.ssh
+              readOnly: true
+          readinessProbe:
+            tcpSocket:
+              port: 8080
+            initialDelaySeconds: 30
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              memory: 512Mi
+      volumes:
+        - name: keys
+          secret:
+            secretName: {{ .Values.jwt.secretName }}
+            items:
+              - key: jwtRS256.key.pub
+                path: publickey
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: transactionhistory
+  labels:
+    app: transactionhistory
+spec:
+  type: ClusterIP
+  selector:
+    app: transactionhistory
+  ports:
+    - name: http
+      port: 8080
+      targetPort: 8080

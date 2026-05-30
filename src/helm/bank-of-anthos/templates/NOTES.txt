@@ -1,0 +1,11 @@
+Bank of Anthos развёрнут (релиз: {{ .Release.Name }}, namespace: {{ .Release.Namespace }}).
+
+Проверь поды:
+  kubectl get pods -n {{ .Release.Namespace }}
+
+{{- if .Values.ingress.enabled }}
+Открой банк в браузере:
+  http://{{ .Values.ingress.host }}
+{{- end }}
+
+Демо-вход:  {{ .Values.demo.username }} / {{ .Values.demo.password }}

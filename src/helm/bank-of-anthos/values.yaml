@@ -1,0 +1,46 @@
+imageRepo: "us-central1-docker.pkg.dev/bank-of-anthos-ci/bank-of-anthos"
+imageTag: "v0.6.9"
+imagePullPolicy: IfNotPresent
+
+appVersion: "v0.6.9"
+
+environment:
+  localRoutingNum: "883745000"
+  pubKeyPath: "/tmp/.ssh/publickey"
+  privKeyPath: "/tmp/.ssh/privatekey"
+
+demo:
+  useDemoData: "True"
+  username: "testuser"
+  password: "bankofanthos"
+
+jwt:
+  secretName: "jwt-key"
+  privateKey: ""
+  publicKey: ""
+
+accountsDb:
+  postgresDb: "accounts-db"
+  postgresUser: "accounts-admin"
+  postgresPassword: "accounts-pwd"
+ledgerDb:
+  postgresDb: "postgresdb"
+  postgresUser: "admin"
+  postgresPassword: "password"
+
+replicas:
+  frontend: 1
+  userservice: 1
+  contacts: 1
+  balancereader: 1
+  ledgerwriter: 1
+  transactionhistory: 1
+
+loadgenerator:
+  enabled: false
+  users: 5
+
+ingress:
+  enabled: true
+  className: "nginx"
+  host: "bank.10.174.8.95.nip.io"
