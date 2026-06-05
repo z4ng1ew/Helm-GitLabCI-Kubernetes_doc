@@ -11,3 +11,11 @@ for node in $(kubectl get nodes -o jsonpath='{.items[*].metadata.name}'); do
   echo "--- $node ---"
   kubectl describe node "$node" | grep -A5 "Allocated resources" | grep -i memory
 done
+
+
+
+
+
+
+
+
