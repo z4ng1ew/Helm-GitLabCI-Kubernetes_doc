@@ -108,3 +108,152 @@ deploy-prod:
     name: prod
     url: http://bank.10.174.8.95.nip.io
   when: manual
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+# GitLab CI/CD Pipeline для Bank of Anthos
+
+## Конфигурация с построчными комментариями
+
+```yaml
+stages:                              # Определяем последовательность этапов pipeline
+  - build                            # Этап сборки Docker-образов
+  - test                             # Этап запуска тестов
+  - staging                          # Этап деплоя в staging-окружение
+  - prod                             # Этап деплоя в production-окружение
+
+variables:                           # Глобальные переменные, доступные всем job'ам
+  IMAGE_TAG: "$CI_COMMIT_SHORT_SHA"  # Тег образа = короткий хеш коммита (уникальность)
+  CHART: "src/helm/bank-of-anthos"   # Путь к Helm-чарту приложения
+  DOCKERHUB_USER: "zangievmovsar"    # Имя пользователя DockerHub
+
+build:                               # Job сборки контейнерных образов
+  stage: build                       # Привязка к этапу build
+  image:                             # Образ, в котором выполняется job
+    name: moby/buildkit:latest       # BuildKit — современный сборщик образов без Docker daemon
+    entrypoint: [""]                 # Сброс entrypoint для возможности запуска shell-команд
+  variables:                         # Локальные переменные job'а
+    BUILDKIT_HOST: tcp://buildkitd.buildkit.svc.cluster.local:1234  # Адрес BuildKit-сервера в кластере
+    REGISTRY: 10.174.8.95:30500      # Адрес внутреннего Docker Registry (NodePort)
+  parallel:                          # Параллельный запуск job'ов
+    matrix:                          # Матрица переменных — по job'у на каждый сервис
+      - SERVICE: frontend            # Веб-интерфейс
+        CONTEXT: src/bank-of-anthos/src/frontend
+      - SERVICE: userservice         # Сервис управления пользователями
+        CONTEXT: src/bank-of-anthos/src/accounts/userservice
+      - SERVICE: contacts            # Сервис контактов
+        CONTEXT: src/bank-of-anthos/src/accounts/contacts
+      - SERVICE: accounts-db         # БД аккаунтов (PostgreSQL)
+        CONTEXT: src/bank-of-anthos/src/accounts/accounts-db
+      - SERVICE: ledger-db           # БД журнала транзакций
+        CONTEXT: src/bank-of-anthos/src/ledger/ledger-db
+      - SERVICE: balancereader       # Сервис чтения баланса
+        CONTEXT: src/bank-of-anthos/src/ledger/balancereader
+      - SERVICE: ledgerwriter        # Сервис записи в журнал
+        CONTEXT: src/bank-of-anthos/src/ledger/ledgerwriter
+      - SERVICE: transactionhistory  # Сервис истории транзакций
+        CONTEXT: src/bank-of-anthos/src/ledger/transactionhistory
+  script:                            # Команды сборки
+    - >-                             # Многострочная команда без переносов
+      buildctl
+      --addr "$BUILDKIT_HOST"        # Подключение к удалённому BuildKit
+      build
+      --frontend dockerfile.v0       # Используем Dockerfile как источник инструкций
+      --local context="$CI_PROJECT_DIR/$CONTEXT"     # Контекст сборки
+      --local dockerfile="$CI_PROJECT_DIR/$CONTEXT"  # Путь к Dockerfile
+      --output type=image,name="$REGISTRY/$SERVICE:$IMAGE_TAG",push=true,registry.insecure=true
+                                     # Публикуем образ в insecure registry
+
+test-java:                           # Тестирование Java-сервисов
+  stage: test                        # Привязка к этапу test
+  image: maven:3.9-eclipse-temurin-17 # Образ с Maven и JDK 17
+  parallel:
+    matrix:                          # Параллельные тесты для трёх Java-сервисов
+      - DIR: src/bank-of-anthos/src/ledger/balancereader
+      - DIR: src/bank-of-anthos/src/ledger/ledgerwriter
+      - DIR: src/bank-of-anthos/src/ledger/transactionhistory
+  script:
+    - cd "$DIR"                      # Переход в директорию сервиса
+    - mvn -B test                    # Запуск unit-тестов Maven в batch-режиме
+
+test-python:                         # Тестирование Python-сервисов
+  stage: test
+  image: python:3.12-slim            # Лёгкий Python-образ
+  parallel:
+    matrix:
+      - DIR: src/bank-of-anthos/src/accounts/userservice
+      - DIR: src/bank-of-anthos/src/accounts/contacts
+  script:
+    - cd "$DIR"
+    - pip install --no-cache-dir -r requirements.txt   # Установка зависимостей без кеша
+    - PYTHONPATH=. python -m pytest tests/ -v          # Запуск pytest с подробным выводом
+
+.deploy:                             # Шаблон для деплоя (скрытый job, через точку)
+  image: alpine/k8s:1.30.2           # Alpine с kubectl и helm
+  script:
+    - |                              # Многострочный блок shell
+      JWT_ARGS=""                    # Инициализация переменной аргументов JWT
+      if [ -n "$JWT_PRIVATE_KEY" ] && [ -n "$JWT_PUBLIC_KEY" ]; then
+        JWT_ARGS="--set-file jwt.privateKey=$JWT_PRIVATE_KEY --set-file jwt.publicKey=$JWT_PUBLIC_KEY"
+      fi                             # Если ключи переданы — формируем аргументы для helm
+    - >-
+      helm upgrade --install boa "$CHART"   # Установка/обновление релиза boa
+      -n "$NS"                              # В namespace из переменной
+      --set imageRepo="10.174.8.95:30500"   # Адрес registry
+      --set imageTag="$IMAGE_TAG"           # Тег образа = SHA коммита
+      --set appVersion="$IMAGE_TAG"         # Версия приложения
+      --set ingress.host="$HOST"            # Хост для Ingress
+      $JWT_ARGS                             # Подключение JWT-ключей если есть
+      --wait --timeout 5m                   # Ожидание готовности до 5 минут
+    - kubectl get pods -n "$NS"             # Проверка состояния подов
+
+deploy-staging:                      # Деплой в staging
+  extends: .deploy                   # Наследование шаблона
+  stage: staging
+  variables:
+    NS: staging                      # Namespace для staging
+    HOST: bank-staging.10.174.8.95.nip.io   # DNS через nip.io
+  environment:
+    name: staging                    # GitLab окружение для отслеживания
+    url: http://bank-staging.10.174.8.95.nip.io
+
+deploy-prod:                         # Деплой в production
+  extends: .deploy
+  stage: prod
+  variables:
+    NS: prod
+    HOST: bank.10.174.8.95.nip.io
+  environment:
+    name: prod
+    url: http://bank.10.174.8.95.nip.io
+  when: manual                       # Запуск только вручную (защита prod)
+```
+
+---
+
+## Монолог для защиты (≈300 слов)
+
+Уважаемая комиссия, представляю реализацию CI/CD-пайплайна для микросервисного приложения **Bank of Anthos**, развёртываемого в Kubernetes-кластере с использованием GitLab CI.
+
+Пайплайн построен на четырёх логических этапах: **build, test, staging и prod**, что соответствует классической модели непрерывной поставки и обеспечивает чёткое разделение ответственности между фазами.
+
+На этапе **build** используется современный сборщик **BuildKit**, развёрнутый отдельным сервисом внутри кластера. Это позволяет отказаться от привилегированного Docker-in-Docker, повысить безопасность и ускорить сборку за счёт кеширования слоёв. Восемь микросервисов собираются **параллельно** благодаря директиве `parallel: matrix`, что существенно сокращает время пайплайна. Каждый образ получает тег, равный короткому хешу коммита — это гарантирует уникальность и трассируемость артефактов. Образы публикуются во внутренний registry, развёрнутый на NodePort.
+
+На этапе **test** реализовано разделение по технологическим стекам: Java-сервисы тестируются через Maven, Python-сервисы — через pytest. Тесты также запускаются параллельно, что соответствует принципам shift-left testing.
+
+Этап **deploy** реализован через шаблон с префиксом точки — это скрытый job, переиспользуемый через механизм `extends`. Такой подход соответствует принципу **DRY**. Развёртывание выполняется через **Helm**, что обеспечивает версионирование релизов, простой rollback и декларативность. Передача JWT-ключей реализована опционально через `--set-file`, что важно для безопасной работы аутентификации между сервисами. Команда `helm upgrade --install` идемпотентна, флаг `--wait` гарантирует, что pipeline завершится только после готовности всех подов.
+
+Особое внимание уделено разграничению окружений: **staging** деплоится автоматически после успешных тестов, а **production** — только вручную через `when: manual`. Это реализует принцип **manual approval gate** для критичных окружений. Для обоих окружений используются отдельные namespace и Ingress-хосты через сервис **nip.io**, что избавляет от необходимости настраивать внешний DNS.
+
+В результате пайплайн обеспечивает **автоматизацию, параллелизм, безопасность и контроль** на всех этапах доставки приложения от коммита до production.
