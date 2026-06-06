@@ -1,0 +1,54 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ledger-db
+  labels:
+    app: ledger-db
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: ledger-db
+  template:
+    metadata:
+      labels:
+        app: ledger-db
+    spec:
+      containers:
+        - name: ledger-db
+          image: "{{ .Values.imageRepo }}/ledger-db:{{ .Values.imageTag }}"
+          imagePullPolicy: {{ .Values.imagePullPolicy }}
+          envFrom:
+            - configMapRef:
+                name: ledger-db-config
+          ports:
+            - name: tcp
+              containerPort: 5432
+          volumeMounts:
+            - name: ledger-db-data
+              mountPath: /var/lib/postgresql/data
+              subPath: postgres
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              memory: 512Mi
+      volumes:
+        - name: ledger-db-data
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ledger-db
+  labels:
+    app: ledger-db
+spec:
+  type: ClusterIP
+  selector:
+    app: ledger-db
+  ports:
+    - name: tcp
+      port: 5432
+      targetPort: 5432

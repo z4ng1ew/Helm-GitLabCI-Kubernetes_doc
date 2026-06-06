@@ -1,0 +1,20 @@
+# Prod: по 2 реплики на stateless-сервисы для отказоустойчивости.
+# Базы данных (accountsDb, ledgerDb) остаются по 1 — они stateful.
+replicas:
+  frontend: 2
+  userservice: 2
+  contacts: 2
+  balancereader: 2
+  ledgerwriter: 2
+  transactionhistory: 2
+
+ingress:
+  enabled: true
+  className: "nginx"
+  host: "bank.spectrew.online"
+  tls:
+    enabled: true
+    secretName: "wildcard-spectrew-tls"
+
+antiAffinity:
+  enabled: true

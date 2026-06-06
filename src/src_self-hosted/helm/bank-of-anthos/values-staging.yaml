@@ -1,0 +1,19 @@
+# Staging: по 1 реплике, предбоевая среда
+replicas:
+  frontend: 1
+  userservice: 1
+  contacts: 1
+  balancereader: 1
+  ledgerwriter: 1
+  transactionhistory: 1
+
+ingress:
+  enabled: true
+  className: "nginx"
+  host: "bank-staging.spectrew.online"
+  tls:
+    enabled: true
+    secretName: "wildcard-spectrew-tls"
+
+antiAffinity:
+  enabled: true

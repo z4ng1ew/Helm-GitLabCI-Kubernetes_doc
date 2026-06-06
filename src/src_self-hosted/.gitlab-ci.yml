@@ -1,0 +1,126 @@
+stages:
+  - build
+  - test
+  - staging
+  - prod
+variables:
+  IMAGE_TAG: "$CI_COMMIT_SHORT_SHA"
+  CHART: "src/helm/bank-of-anthos"
+  DOCKERHUB_USER: "zangievmovsar"
+build:
+  stage: build
+  image:
+    name: moby/buildkit:latest
+    entrypoint: [""]
+  parallel:
+    matrix:
+      - SERVICE: frontend
+        CONTEXT: src/bank-of-anthos/src/frontend
+      - SERVICE: userservice
+        CONTEXT: src/bank-of-anthos/src/accounts/userservice
+      - SERVICE: contacts
+        CONTEXT: src/bank-of-anthos/src/accounts/contacts
+      - SERVICE: accounts-db
+        CONTEXT: src/bank-of-anthos/src/accounts/accounts-db
+      - SERVICE: ledger-db
+        CONTEXT: src/bank-of-anthos/src/ledger/ledger-db
+      - SERVICE: balancereader
+        CONTEXT: src/bank-of-anthos/src/ledger/balancereader
+      - SERVICE: ledgerwriter
+        CONTEXT: src/bank-of-anthos/src/ledger/ledgerwriter
+      - SERVICE: transactionhistory
+        CONTEXT: src/bank-of-anthos/src/ledger/transactionhistory
+  before_script:
+    - mkdir -p ~/.docker
+    - |
+      echo "{\"auths\":{\"$CI_REGISTRY\":{\"auth\":\"$(printf '%s:%s' "$CI_REGISTRY_USER" "$CI_REGISTRY_PASSWORD" | base64 | tr -d '\n')\"}}}" > ~/.docker/config.json
+    - buildkitd &
+    - |
+      for i in $(seq 1 30); do
+        if buildctl debug workers >/dev/null 2>&1; then
+          echo "buildkitd ready"; break
+        fi
+        sleep 1
+      done
+  script:
+    - >-
+      buildctl build
+      --frontend dockerfile.v0
+      --local context="$CI_PROJECT_DIR/$CONTEXT"
+      --local dockerfile="$CI_PROJECT_DIR/$CONTEXT"
+      --output type=image,name="$CI_REGISTRY_IMAGE/$SERVICE:$IMAGE_TAG",push=true,registry.insecure=true
+test-java:
+  stage: test
+  image: maven:3.9-eclipse-temurin-17
+  parallel:
+    matrix:
+      - DIR: src/bank-of-anthos/src/ledger/balancereader
+      - DIR: src/bank-of-anthos/src/ledger/ledgerwriter
+      - DIR: src/bank-of-anthos/src/ledger/transactionhistory
+  script:
+    - cd "$DIR"
+    - mvn -B test
+test-python:
+  stage: test
+  image: python:3.12-slim
+  parallel:
+    matrix:
+      - DIR: src/bank-of-anthos/src/accounts/userservice
+      - DIR: src/bank-of-anthos/src/accounts/contacts
+  script:
+    - cd "$DIR"
+    - pip install --no-cache-dir -r requirements.txt
+    - PYTHONPATH=. python -m pytest tests/ -v
+.deploy:
+  image: alpine/k8s:1.30.2
+  before_script:
+    - |
+      kubectl create secret docker-registry gitlab-registry \
+        --docker-server="$CI_REGISTRY" \
+        --docker-username="$CI_REGISTRY_USER" \
+        --docker-password="$CI_REGISTRY_PASSWORD" \
+        --namespace="$NS" \
+        --dry-run=client -o yaml | kubectl apply -f -
+    - |
+      kubectl patch serviceaccount default -n "$NS" \
+        -p '{"imagePullSecrets":[{"name":"gitlab-registry"}]}'
+  script:
+    - |
+      JWT_ARGS=""
+      if [ -n "$JWT_PRIVATE_KEY" ] && [ -n "$JWT_PUBLIC_KEY" ]; then
+        JWT_ARGS="--set-file jwt.privateKey=$JWT_PRIVATE_KEY --set-file jwt.publicKey=$JWT_PUBLIC_KEY"
+      fi
+    - >-
+      helm upgrade --install boa "$CHART"
+      -n "$NS"
+      -f "$CHART/$VALUES_FILE"
+      --set imageRepo="$CI_REGISTRY_IMAGE"
+      --set imageTag="$IMAGE_TAG"
+      --set appVersion="$IMAGE_TAG"
+      --set ingress.host="$HOST"
+      --set ingress.tls.enabled=true
+      --set ingress.tls.secretName=wildcard-spectrew-tls
+      $JWT_ARGS
+      --wait --timeout 5m
+    - kubectl get pods -n "$NS"
+deploy-staging:
+  extends: .deploy
+  stage: staging
+  variables:
+    NS: staging
+    HOST: bank-staging.spectrew.online
+    VALUES_FILE: values-staging.yaml
+  environment:
+    name: staging
+    url: https://bank-staging.spectrew.online
+deploy-prod:
+  extends: .deploy
+  stage: prod
+  variables:
+    NS: prod
+    HOST: bank.spectrew.online
+    VALUES_FILE: values-prod.yaml
+  environment:
+    name: prod
+    url: https://bank.spectrew.online
+  when: manual

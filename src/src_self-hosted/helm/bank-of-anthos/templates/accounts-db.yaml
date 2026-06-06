@@ -1,0 +1,54 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: accounts-db
+  labels:
+    app: accounts-db
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: accounts-db
+  template:
+    metadata:
+      labels:
+        app: accounts-db
+    spec:
+      containers:
+        - name: accounts-db
+          image: "{{ .Values.imageRepo }}/accounts-db:{{ .Values.imageTag }}"
+          imagePullPolicy: {{ .Values.imagePullPolicy }}
+          envFrom:
+            - configMapRef:
+                name: accounts-db-config
+          ports:
+            - name: tcp
+              containerPort: 5432
+          volumeMounts:
+            - name: postgresdb
+              mountPath: /var/lib/postgresql/data
+              subPath: postgres
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              memory: 512Mi
+      volumes:
+        - name: postgresdb
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: accounts-db
+  labels:
+    app: accounts-db
+spec:
+  type: ClusterIP
+  selector:
+    app: accounts-db
+  ports:
+    - name: tcp
+      port: 5432
+      targetPort: 5432

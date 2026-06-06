@@ -44,3 +44,14 @@ ingress:
   enabled: true
   className: "nginx"
   host: "bank.10.174.8.95.nip.io"
+  tls:
+    enabled: false
+    issuer: "my-ca-issuer"
+    secretName: "bank-tls"
+
+
+
+
+# Антиаффинити: разносить реплики одного сервиса по разным нодам (мягкое правило)
+antiAffinity:
+  enabled: true

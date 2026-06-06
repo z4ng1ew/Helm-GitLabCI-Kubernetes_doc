@@ -14,6 +14,17 @@ spec:
       labels:
         app: transactionhistory
     spec:
+      affinity:
+        {{- if .Values.antiAffinity.enabled }}
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                labelSelector:
+                  matchLabels:
+                    app: transactionhistory
+                topologyKey: kubernetes.io/hostname
+        {{- end }}
       containers:
         - name: transactionhistory
           image: "{{ .Values.imageRepo }}/transactionhistory:{{ .Values.imageTag }}"

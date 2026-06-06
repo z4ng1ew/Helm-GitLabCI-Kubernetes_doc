@@ -1,0 +1,91 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ledgerwriter
+  labels:
+    app: ledgerwriter
+spec:
+  replicas: {{ .Values.replicas.ledgerwriter }}
+  selector:
+    matchLabels:
+      app: ledgerwriter
+  template:
+    metadata:
+      labels:
+        app: ledgerwriter
+    spec:
+      affinity:
+        {{- if .Values.antiAffinity.enabled }}
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                labelSelector:
+                  matchLabels:
+                    app: ledgerwriter
+                topologyKey: kubernetes.io/hostname
+        {{- end }}
+      containers:
+        - name: ledgerwriter
+          image: "{{ .Values.imageRepo }}/ledgerwriter:{{ .Values.imageTag }}"
+          imagePullPolicy: {{ .Values.imagePullPolicy }}
+          ports:
+            - name: http
+              containerPort: 8080
+          env:
+            - name: VERSION
+              value: {{ .Values.appVersion | quote }}
+            - name: PORT
+              value: "8080"
+            - name: ENABLE_TRACING
+              value: "false"
+            - name: ENABLE_METRICS
+              value: "false"
+            - name: JVM_OPTS
+              value: "-XX:+UseContainerSupport -XX:MaxRAMPercentage=70"
+            - name: LOG_LEVEL
+              value: "info"
+          envFrom:
+            - configMapRef:
+                name: environment-config
+            - configMapRef:
+                name: ledger-db-config
+            - configMapRef:
+                name: service-api-config
+          volumeMounts:
+            - name: keys
+              mountPath: /tmp/.ssh
+              readOnly: true
+          readinessProbe:
+            tcpSocket:
+              port: 8080
+            initialDelaySeconds: 30
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              memory: 512Mi
+      volumes:
+        - name: keys
+          secret:
+            secretName: {{ .Values.jwt.secretName }}
+            items:
+              - key: jwtRS256.key.pub
+                path: publickey
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ledgerwriter
+  labels:
+    app: ledgerwriter
+spec:
+  type: ClusterIP
+  selector:
+    app: ledgerwriter
+  ports:
+    - name: http
+      port: 8080
+      targetPort: 8080
