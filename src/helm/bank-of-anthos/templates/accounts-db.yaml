@@ -52,3 +52,93 @@ spec:
     - name: tcp
       port: 5432
       targetPort: 5432
+
+
+
+
+# Accounts-DB Deployment & Service
+
+## Конфигурация с построчными комментариями
+
+```yaml
+apiVersion: apps/v1                  # Версия API для объектов рабочих нагрузок (Deployment входит в apps/v1)
+kind: Deployment                     # Тип ресурса: Deployment — управляет ReplicaSet и подами с rolling-update
+metadata:                            # Метаданные ресурса
+  name: accounts-db                  # Имя Deployment'а в namespace
+  labels:                            # Метки для идентификации и группировки
+    app: accounts-db                 # Стандартный label приложения
+spec:                                # Спецификация Deployment
+  replicas: 1                        # Количество подов — одна реплика (БД, не масштабируется горизонтально)
+  selector:                          # Селектор подов, которыми управляет Deployment
+    matchLabels:
+      app: accounts-db               # Должен совпадать с labels в template.metadata
+  template:                          # Шаблон создаваемых подов
+    metadata:
+      labels:
+        app: accounts-db             # Метки пода — по ним работает selector
+    spec:                            # Спецификация пода
+      containers:                    # Список контейнеров в поде
+        - name: accounts-db          # Имя контейнера
+          image: "{{ .Values.imageRepo }}/accounts-db:{{ .Values.imageTag }}"
+                                     # Образ контейнера; параметризован через values.yaml (Helm-шаблонизация)
+          imagePullPolicy: {{ .Values.imagePullPolicy }}
+                                     # Политика загрузки образа (IfNotPresent / Always / Never)
+          envFrom:                   # Загрузка переменных окружения из внешнего источника
+            - configMapRef:
+                name: accounts-db-config
+                                     # Все ключи из ConfigMap станут env-переменными (POSTGRES_DB, USER и т.д.)
+          ports:                     # Порты, которые слушает контейнер
+            - name: tcp              # Именованный порт (используется в Service)
+              containerPort: 5432    # Стандартный порт PostgreSQL
+          volumeMounts:              # Монтирование томов в файловую систему контейнера
+            - name: postgresdb       # Имя тома (ссылка на volumes ниже)
+              mountPath: /var/lib/postgresql/data
+                                     # Путь монтирования — директория данных PostgreSQL
+              subPath: postgres      # Монтируется только поддиректория postgres (изоляция данных)
+          resources:                 # Ограничения ресурсов
+            requests:                # Гарантированные ресурсы (для планировщика)
+              cpu: 100m              # 0.1 CPU (100 миллиядер)
+              memory: 256Mi          # 256 мегабайт ОЗУ
+            limits:                  # Максимально допустимые ресурсы
+              memory: 512Mi          # Жёсткий лимит памяти (OOMKill при превышении)
+      volumes:                       # Тома пода
+        - name: postgresdb           # Имя тома
+          emptyDir: {}               # Временный том, существует только пока живёт под (данные теряются!)
+---                                  # Разделитель YAML-документов: ниже отдельный ресурс
+apiVersion: v1                       # Версия API для базовых ресурсов (Service — в core v1)
+kind: Service                        # Тип: Service — стабильная сетевая абстракция над подами
+metadata:
+  name: accounts-db                  # Имя сервиса; используется как DNS-имя внутри кластера
+  labels:
+    app: accounts-db                 # Метки для идентификации
+spec:
+  type: ClusterIP                    # Тип сервиса: ClusterIP — доступен только внутри кластера
+  selector:                          # По каким меткам искать поды-бэкенды
+    app: accounts-db                 # Связывает Service с подами Deployment'а
+  ports:                             # Описание портов сервиса
+    - name: tcp                      # Имя порта (для readability)
+      port: 5432                     # Порт самого Service (по нему обращаются клиенты)
+      targetPort: 5432               # Порт контейнера, куда форвардится трафик
+```
+
+---
+
+## Монолог для защиты (≈300 слов)
+
+Уважаемая комиссия, представляю манифест **Deployment и Service** для базы данных **accounts-db**, хранящей данные пользователей банка. Этот файл — типичный пример развёртывания stateful-компонента в Kubernetes через Helm-шаблон.
+
+Манифест состоит из **двух ресурсов**, разделённых маркером `---`. Первый — это **Deployment**, контроллер, который гарантирует поддержание заданного числа реплик и обеспечивает **rolling-update** при изменении конфигурации. Второй — **Service**, который предоставляет стабильную сетевую точку входа к подам, абстрагируя их IP-адреса.
+
+В Deployment используется одна реплика, потому что **PostgreSQL по умолчанию не поддерживает горизонтальное масштабирование** на запись — для этого нужна репликация master-replica или операторы вроде Zalando или CloudNativePG. Селектор `matchLabels: app: accounts-db` связывает Deployment с подами по метке, и эта же метка обязательно присутствует в шаблоне пода.
+
+Образ контейнера задан через **Helm-шаблонизацию**: `{{ .Values.imageRepo }}/accounts-db:{{ .Values.imageTag }}`. Это позволяет переопределять репозиторий и тег без правки манифеста — критично для CI/CD, где тег подставляется из SHA коммита.
+
+Конфигурация PostgreSQL подгружается через **envFrom + configMapRef**. Это удобнее, чем перечислять каждую переменную через env: все ключи ConfigMap'а автоматически становятся переменными окружения. Здесь это `POSTGRES_DB`, `POSTGRES_USER`, `POSTGRES_PASSWORD`.
+
+Контейнер слушает **порт 5432** — стандартный порт PostgreSQL. Данные монтируются в `/var/lib/postgresql/data` с использованием `subPath: postgres`. Subpath нужен потому, что PostgreSQL требует, чтобы директория данных была **пустой при инициализации**, а monо точка монтирования может содержать lost+found.
+
+**Важное замечание**: используется `emptyDir`, то есть **данные теряются при перезапуске пода**. Это допустимо только для демо. В production здесь должен быть **PersistentVolumeClaim** с StatefulSet'ом.
+
+Заданы **resources requests и limits** — это обязательная практика для production: requests влияют на планирование, limits — защищают ноду от перегрузки. Лимит CPU не задан намеренно, чтобы избежать троттлинга.
+
+Service типа **ClusterIP** делает БД доступной только внутри кластера по DNS-имени `accounts-db`, что соответствует принципу **минимальной экспозиции** для безопасности.
